@@ -1,0 +1,20 @@
+fastapi
+uvicorn
+pyrebase4
+openai-whisper
+googletrans==4.0.0-rc1
+python-multipart
+ffmpeg-python
+pydantic
+streamlit
+requests
+pytubefix
+
+/* collapse button visible */
+button[kind="header"]{
+    background:rgba(255,255,255,0.08)!important;
+    border-radius:8px!important;
+}
+button[kind="header"] svg{
+    color:white!important;
+}
