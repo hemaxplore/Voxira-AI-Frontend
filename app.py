@@ -4,8 +4,8 @@ import re
 from collections import Counter
 import time
 
-API_URL = "http://127.0.0.1:8000/auth"   # Change to your backend URL after deployment
-BASE_API = "http://127.0.0.1:8000" 
+API_URL = "https://developergenz-voxira-backend.hf.space/auth"        # change to your backend url after deployment
+BASE_API = "https://developergenz-voxira-backend.hf.space" 
 
 st.set_page_config(
     page_title="Voxira AI",
@@ -992,4 +992,5 @@ elif st.session_state.page == "signup":
     signup_page()
 
 elif st.session_state.page == "dashboard":
+
     dashboard()       
