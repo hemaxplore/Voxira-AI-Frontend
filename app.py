@@ -3,6 +3,7 @@ import requests
 import re
 from collections import Counter
 import time
+import traceback
 
 API_URL = "https://developergenz-voxira-backend.hf.space/auth"        # change to your backend url after deployment
 BASE_API = "https://developergenz-voxira-backend.hf.space" 
@@ -773,10 +774,15 @@ def dashboard():
                         
                         # ------------------ DOWNLOAD FULL AUDIO ------------------
                         ydl_opts = {
-                            'format': 'bestaudio[ext=m4a]/bestaudio',
+                            'format': 'bestaudio/best',
                             'outtmpl': temp_filename,
                             'quiet': True,
                             'noplaylist': True,
+                            'postprocessors': [{
+                                'key': 'FFmpegExtractAudio',
+                                'preferredcodec': 'mp3',
+                                'preferredquality': '192',
+                            }],
                         }
 
                         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -813,6 +819,7 @@ def dashboard():
                             status.empty()
                             
                         st.error("Failed to download YouTube audio.")
+                        st.code(traceback.format_exc())
                         st.write(str(e))
                         st.stop()
 
