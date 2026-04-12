@@ -702,6 +702,12 @@ def dashboard():
                 progress = None
                 status = None
                 
+                # Initialize shared variables first
+                files = None
+                data = {}
+                progress = None
+                status = None
+
                 # ------------------ FILE UPLOAD ----------------------------
                 if uploaded_file:
                     
@@ -724,42 +730,58 @@ def dashboard():
                 
                 # ------------------ YOUTUBE URL -----------------------------
                 elif url_input:
+                    progress = None
+                    status = None
 
                     try:
                         import yt_dlp
                         import os
-                        import uuid
-                        import tempfile
-                        
+                        import time
+                        import traceback
+                        import mimetypes
+
                         progress = st.progress(0)
                         status = st.empty()
-                        
+
                         status.write("🔍 Checking video duration...")
                         progress.progress(10)
                         time.sleep(0.7)
 
-                        # Create unique temp filename
-                        temp_filename = os.path.join(
-                            tempfile.gettempdir(),
-                            f"{uuid.uuid4()}.mp3"
-                        )
+                        os.makedirs("downloads", exist_ok=True)
+
+                        base_ydl_opts = {
+                            "quiet": True,
+                            "no_warnings": True,
+                            "noplaylist": True,
+                            "nocheckcertificate": True,
+                            "retries": 10,
+                            "extractor_retries": 5,
+                            "file_access_retries": 3,
+                             "http_headers": {
+                                "User-Agent": (
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                    "Chrome/123.0.0.0 Safari/537.36"
+                                )
+                            }
+                        }
 
                         # ------------------ CHECK VIDEO DURATION FIRST ------------------
-                        with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+                        with yt_dlp.YoutubeDL(base_ydl_opts) as ydl:
                             info = ydl.extract_info(url_input.strip(), download=False)
-                            if not info or "duration" not in info:
-                                raise Exception("Failed to fetch video metadata")
 
-                            duration = info["duration"]
+                        if not info or "duration" not in info:
+                            raise Exception("Failed to fetch video metadata")
 
+                        duration = info["duration"]
                         duration_minutes = int(duration // 60)
                         duration_seconds = int(duration % 60)
-                        
+
                         progress.progress(30)
                         time.sleep(0.8)
 
                         # Allow only up to 10 minutes
-                        if duration > 600:  # 10 minutes
+                        if duration > 600:
                             st.error(
                                 f"This video is {duration_minutes} min {duration_seconds} sec long.\n"
                                 "For optimal performance, only videos under 10 minutes are supported."
@@ -767,116 +789,171 @@ def dashboard():
                             progress.empty()
                             status.empty()
                             st.stop()
-                        
+
                         status.write("⬇️ Downloading audio from YouTube...")
                         progress.progress(50)
                         time.sleep(1)
-                        
-                        # ------------------ DOWNLOAD FULL AUDIO ------------------
+
+                        # ------------------ DOWNLOAD AUDIO ------------------
                         ydl_opts = {
-                            'format': 'bestaudio/best',
-                            'outtmpl': temp_filename,
-                            'quiet': True,
-                            'noplaylist': True,
-                            'postprocessors': [{
-                                'key': 'FFmpegExtractAudio',
-                                'preferredcodec': 'mp3',
-                                'preferredquality': '192',
-                            }],
+                            **base_ydl_opts,
+                            "format": "bestaudio[ext=m4a]/bestaudio/best",
+                            "outtmpl": "downloads/%(id)s.%(ext)s",
                         }
 
                         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                            ydl.download([url_input.strip()])
-                            
+                            downloaded_info = ydl.extract_info(url_input.strip(), download=True)
+
+                            temp_filename = None
+                            requested_downloads = downloaded_info.get("requested_downloads", [])
+
+                            if requested_downloads and requested_downloads[0].get("filepath"):
+                                temp_filename = requested_downloads[0]["filepath"]
+                            else:
+                                temp_filename = ydl.prepare_filename(downloaded_info)
+
+                        if not temp_filename or not os.path.exists(temp_filename):
+                            raise Exception(f"Downloaded file not found: {temp_filename}")
+
                         progress.progress(70)
                         status.write("📂 Preparing audio file...")
                         time.sleep(0.8)
-                        
-                        # Read downloaded file
+
                         with open(temp_filename, "rb") as f:
                             file_bytes = f.read()
 
+                        file_name = os.path.basename(temp_filename)
+                        mime_type = mimetypes.guess_type(temp_filename)[0] or "application/octet-stream"
+
                         os.remove(temp_filename)
-                        
+
                         files = {
                             "file": (
-                                "downloaded_audio.mp3",
+                                file_name,
                                 file_bytes,
-                                "audio/mpeg"
+                                mime_type
                             )
                         }
-                        
+
                         progress.progress(90)
                         status.write("🚀 Sending audio for transcription...")
                         time.sleep(0.8)
-                        
+
                     except Exception as e:
-                        
                         if progress:
                             progress.empty()
-                            
-                        if status:    
+
+                        if status:
                             status.empty()
-                            
-                        st.error("Failed to download YouTube audio.")
+
+                        st.error(f"Failed to download YouTube audio: {str(e)}")
                         st.code(traceback.format_exc())
-                        st.write(str(e))
                         st.stop()
 
                 # --------------------- TRANSCRIBE -------------------------------
                 try:
-                    
-                    if not files:
+                    if not files or "file" not in files:
                         st.error("No audio file provided.")
                         st.stop()
-                        
+
                     if progress:
                         progress.progress(95)
-                        
-                    if status:    
+
+                    if status:
                         status.write("🧠 AI is transcribing the audio...")
-                    
+
                     response = requests.post(
                         f"{BASE_API}/transcribe/",
                         files=files,
-                        data=data,
-                        timeout=1800
+                        data=data if data else {},
+                        timeout=(30, 1800)  # 30s connect, 1800s read
                     )
 
-                    result = response.json()
+                    # First check if backend returned success
+                    if response.status_code != 200:
+                        try:
+                            error_result = response.json()
+                        except ValueError:
+                            error_result = response.text
 
-                    if response.status_code == 200 and "transcript" in result:
-                        
-                        if progress:
-                            progress.progress(100)
-                            
-                        if status:
-                            status.write("✅ Transcription completed")
-                        
-                        time.sleep(1)  # allow user to see 100%
-                        
-                        st.session_state.transcript = result["transcript"]
-                        st.success("✅ Transcription Completed")
-                        
-                        # ✅ hide progress UI after finishing
-                        if progress:
-                            progress.empty()
-                            
-                        if status:    
-                            status.empty()
-                    else:
-                        st.error(result)
+                        raise Exception(f"Backend error {response.status_code}: {error_result}")
 
-                except requests.exceptions.RequestException as e:
-                    
+                    # Then safely parse JSON
+                    try:
+                        result = response.json()
+                    except ValueError:
+                        raise Exception(f"Backend returned invalid JSON: {response.text[:500]}")
+
+                    # Validate transcript field
+                    transcript = result.get("transcript")
+                    if not transcript:
+                        raise Exception(f"'transcript' not found in backend response: {result}")
+
+                    if progress:
+                        progress.progress(100)
+
+                    if status:
+                        status.write("✅ Transcription completed")
+
+                    time.sleep(1)
+
+                    st.session_state.transcript = transcript
+                    st.success("✅ Transcription Completed")
+
+                    # Optional: save extra fields if backend returns them
+                    if "summary" in result:
+                        st.session_state.summary = result["summary"]
+
+                    if "language" in result:
+                        st.session_state.language = result["language"]
+
                     if progress:
                         progress.empty()
-                        
+
                     if status:
                         status.empty()
-                        
-                    st.error("Backend server not running.")
+
+                except requests.exceptions.Timeout:
+                    if progress:
+                        progress.empty()
+
+                    if status:
+                        status.empty()
+
+                    st.error("Transcription request timed out. The audio may be too large or the backend is taking too long.")
+                    st.stop()
+
+                except requests.exceptions.ConnectionError:
+                    if progress:
+                        progress.empty()
+
+                    if status:
+                        status.empty()
+
+                    st.error("Backend server is not reachable.")
+                    st.stop()
+
+                except requests.exceptions.RequestException as e:
+                    if progress:
+                        progress.empty()
+
+                    if status:
+                        status.empty()
+
+                    st.error("Request to backend failed.")
                     st.write(str(e))
+                    st.stop()
+
+                except Exception as e:
+                    if progress:
+                        progress.empty()
+
+                    if status:
+                        status.empty()
+
+                    st.error("Transcription failed.")
+                    st.write(str(e))
+                    st.stop()
 
     #------------------------ 🌍 SHOW TRANSCRIPT -------------------------------------------------
     if "transcript" in st.session_state:
