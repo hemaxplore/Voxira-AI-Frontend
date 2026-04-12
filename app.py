@@ -746,7 +746,10 @@ def dashboard():
                         # ------------------ CHECK VIDEO DURATION FIRST ------------------
                         with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
                             info = ydl.extract_info(url_input.strip(), download=False)
-                            duration = info.get("duration", 0)
+                            if not info or "duration" not in info:
+                                raise Exception("Failed to fetch video metadata")
+
+                            duration = info["duration"]
 
                         duration_minutes = int(duration // 60)
                         duration_seconds = int(duration % 60)
